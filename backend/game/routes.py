@@ -1,3 +1,25 @@
+# game/routes.py - FIXED VERSION
+from fastapi import APIRouter, HTTPException
+from supabase import create_client
+import os
+import uuid
+import time
+from typing import Dict
+from .models import CreateRoomRequest, JoinRoomRequest, GameActionRequest, RoomResponse
+
+# Define router FIRST
+router = APIRouter()
+
+# Initialize Supabase (shared with auth module)
+supabase = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+)
+
+# In-memory game state
+rooms: Dict[str, Dict] = {}
+player_sessions: Dict[str, str] = {}  # player_id → room_id
+
 @router.post("/create-room", response_model=RoomResponse)
 async def create_room(request: CreateRoomRequest):
     """Create a new game room"""
@@ -38,7 +60,7 @@ async def create_room(request: CreateRoomRequest):
             room_id=room_id,
             photon_room=f"brick_{room_id}",
             players=[request.player_id],
-            usernames=usernames  # Send usernames mapping
+            usernames=usernames
         )
         
     except Exception as e:
@@ -126,7 +148,7 @@ async def get_room(room_id: str):
             "id": room["id"],
             "host": room["host"],
             "players": [p["id"] for p in room["players"]],
-            "usernames": usernames,  # Add usernames here!
+            "usernames": usernames,
             "created_at": room["created_at"],
             "state": room["state"]
         }
