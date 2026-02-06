@@ -47,58 +47,98 @@ class LoginResponse(BaseModel):
 # ===== ROUTES =====
 @app.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
-    """Real Supabase authentication - NO MOCK"""
+    """Login EXISTING players only - fails if username doesn't exist"""
     username = request.username.strip().lower()
     
     if len(username) < 3:
-        return LoginResponse(success=False, message="Username too short")
+        return LoginResponse(success=False, message="Username must be 3+ characters")
     
     try:
-        # Check existing user
-        result = supabase.table("players").select("*").eq("username", username).execute()
+        # Find existing player
+        result = supabase.table("players") \
+            .select("*") \
+            .eq("username", username) \
+            .execute()
         
-        if result.data:
-            # Existing user
-            user = result.data[0]
-            user_id = user["id"]
-            
-            # Update last_login
-            supabase.table("players").update({"last_login": "now()"}).eq("id", user_id).execute()
-            
+        if not result.data:
             return LoginResponse(
-                success=True,
-                token=f"bt_{user_id}_{int(time.time())}",
-                message=f"Welcome back, {username}!",
-                user_id=user_id,
-                coins=user.get("coins", 100),
-                level=user.get("level", 1),
-                username=username
+                success=False, 
+                message="Account not found. Please sign up first."
             )
-        else:
-            # New user
-            new_user = {
-                "username": username,
-                "coins": 100,
-                "level": 1
-            }
-            
-            insert_result = supabase.table("players").insert(new_user).execute()
-            user = insert_result.data[0]
-            user_id = user["id"]
-            
-            return LoginResponse(
-                success=True,
-                token=f"bt_{user_id}_{int(time.time())}",
-                message=f"Welcome, {username}! You have 100 coins.",
-                user_id=user_id,
-                coins=100,
-                level=1,
-                username=username
-            )
-            
+        
+        player = result.data[0]
+        
+        # Update last_login
+        supabase.table("players") \
+            .update({"last_login": "now()"}) \
+            .eq("id", player["id"]) \
+            .execute()
+        
+        # Generate auth token
+        auth_token = f"bt_login_{player['id']}_{int(time.time())}"
+        
+        return LoginResponse(
+            success=True,
+            token=auth_token,
+            message=f"Welcome back, {username}!",
+            user_id=player["id"],
+            coins=player.get("coins", 100),
+            level=player.get("level", 1),
+            username=username
+        )
+        
     except Exception as e:
-        print(f"Database error: {e}")
-        return LoginResponse(success=False, message="Database error")
+        print(f"Login error: {e}")
+        return LoginResponse(success=False, message="Login failed")
+
+@app.post("/signup", response_model=LoginResponse)
+async def signup(request: LoginRequest):
+    """Create a NEW player account - fails if username exists"""
+    username = request.username.strip().lower()
+    
+    if len(username) < 3:
+        return LoginResponse(success=False, message="Username must be 3+ characters")
+    
+    try:
+        # Check if username already exists
+        existing = supabase.table("players") \
+            .select("id") \
+            .eq("username", username) \
+            .execute()
+        
+        if existing.data:
+            return LoginResponse(
+                success=False, 
+                message="Username already taken. Try logging in instead."
+            )
+        
+        # Create new player
+        new_player = {
+            "username": username,
+            "coins": 100,
+            "level": 1
+        }
+        
+        result = supabase.table("players").insert(new_player).execute()
+        player = result.data[0]
+        
+        # Generate auth token
+        auth_token = f"bt_signup_{player['id']}_{int(time.time())}"
+        
+        return LoginResponse(
+            success=True,
+            token=auth_token,
+            message=f"Welcome, {username}! Account created with 100 coins.",
+            user_id=player["id"],
+            coins=100,
+            level=1,
+            username=username
+        )
+        
+    except Exception as e:
+        print(f"Signup error: {e}")
+        return LoginResponse(success=False, message="Account creation failed")
+
 
 @app.get("/health")
 async def health():
