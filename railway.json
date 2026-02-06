@@ -6,7 +6,7 @@
     }
   },
   "deploy": {
-    "startCommand": "pwd && ls -la && echo '--- Looking for main.py ---' && find . -name '*.py' -type f && echo '--- Trying to start ---' && python main.py 2>/dev/null || echo 'main.py not found at root'",
+    "startCommand": "python main.py",
     "restartPolicyType": "ON_FAILURE"
   }
 }
