@@ -1,24 +1,26 @@
-# game/routes.py - FIXED VERSION
+# game/routes.py - ADD CHAT ENDPOINTS
 from fastapi import APIRouter, HTTPException
 from supabase import create_client
 import os
 import uuid
 import time
-from typing import Dict
+from typing import Dict, List
 from .models import CreateRoomRequest, JoinRoomRequest, GameActionRequest, RoomResponse
 
-# Define router FIRST
 router = APIRouter()
 
-# Initialize Supabase (shared with auth module)
+# Initialize Supabase
 supabase = create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 )
 
-# In-memory game state
+# In-memory storage for rooms and chat
 rooms: Dict[str, Dict] = {}
 player_sessions: Dict[str, str] = {}  # player_id → room_id
+
+# Chat messages storage
+chat_messages: Dict[str, List[Dict]] = {}  # room_id → list of messages
 
 @router.post("/create-room", response_model=RoomResponse)
 async def create_room(request: CreateRoomRequest):
@@ -49,6 +51,9 @@ async def create_room(request: CreateRoomRequest):
             }
         }
         player_sessions[request.player_id] = room_id
+        
+        # Initialize chat for this room
+        chat_messages[room_id] = []
         
         print(f"✅ Room created: {room_id}")
         
@@ -156,3 +161,124 @@ async def get_room(room_id: str):
     except Exception as e:
         print(f"❌ Error getting room: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ===== CHAT ENDPOINTS =====
+@router.post("/chat/send")
+async def send_chat_message(data: dict):
+    """Send a chat message to a room"""
+    try:
+        room_id = data.get("room_id")
+        user_id = data.get("user_id")
+        username = data.get("username")
+        message = data.get("message", "").strip()
+        
+        if not room_id or not user_id or not username:
+            return {"success": False, "error": "Missing required fields"}
+        
+        if not message:
+            return {"success": False, "error": "Message cannot be empty"}
+        
+        # Limit message length
+        if len(message) > 500:
+            message = message[:500] + "..."
+        
+        # Create chat message
+        chat_message = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "username": username,
+            "message": message,
+            "timestamp": time.time(),
+            "type": "chat"
+        }
+        
+        # Store message
+        if room_id not in chat_messages:
+            chat_messages[room_id] = []
+        
+        chat_messages[room_id].append(chat_message)
+        
+        # Keep only last 100 messages per room
+        if len(chat_messages[room_id]) > 100:
+            chat_messages[room_id] = chat_messages[room_id][-100:]
+        
+        print(f"💬 {username} in {room_id}: {message[:50]}...")
+        
+        return {"success": True, "message_id": chat_message["id"]}
+        
+    except Exception as e:
+        print(f"❌ Error sending chat: {e}")
+        return {"success": False, "error": str(e)}
+
+@router.get("/chat/{room_id}")
+async def get_chat_messages(room_id: str, after: float = 0, limit: int = 50):
+    """Get chat messages for a room (polling endpoint)"""
+    try:
+        if room_id not in chat_messages:
+            return {"success": True, "messages": [], "latest_timestamp": 0}
+        
+        # Filter messages after the given timestamp
+        messages = chat_messages[room_id]
+        new_messages = [msg for msg in messages if msg["timestamp"] > after]
+        
+        # Apply limit
+        if len(new_messages) > limit:
+            new_messages = new_messages[-limit:]
+        
+        # Get latest timestamp
+        latest_timestamp = messages[-1]["timestamp"] if messages else 0
+        
+        return {
+            "success": True,
+            "messages": new_messages,
+            "latest_timestamp": latest_timestamp
+        }
+        
+    except Exception as e:
+        print(f"❌ Error getting chat: {e}")
+        return {"success": False, "error": str(e)}
+
+@router.post("/chat/system")
+async def send_system_message(data: dict):
+    """Send a system message to a room"""
+    try:
+        room_id = data.get("room_id")
+        message = data.get("message", "").strip()
+        
+        if not room_id or not message:
+            return {"success": False, "error": "Missing required fields"}
+        
+        # Create system message
+        system_message = {
+            "id": str(uuid.uuid4()),
+            "user_id": "system",
+            "username": "System",
+            "message": message,
+            "timestamp": time.time(),
+            "type": "system"
+        }
+        
+        # Store message
+        if room_id not in chat_messages:
+            chat_messages[room_id] = []
+        
+        chat_messages[room_id].append(system_message)
+        
+        print(f"🔔 System message in {room_id}: {message}")
+        
+        return {"success": True, "message_id": system_message["id"]}
+        
+    except Exception as e:
+        print(f"❌ Error sending system message: {e}")
+        return {"success": False, "error": str(e)}
+
+@router.get("/health")
+async def health():
+    """Game service health check"""
+    return {
+        "status": "healthy",
+        "service": "game",
+        "active_rooms": len(rooms),
+        "active_players": len(player_sessions),
+        "active_chats": len(chat_messages)
+    }
