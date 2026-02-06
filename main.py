@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
@@ -48,15 +49,14 @@ async def login(request: LoginRequest):
     user_id = users_db[username]
     
     try:
-        # CORRECT Photon authentication endpoint
-        # Documentation: https://doc.photonengine.com/en-us/realtime/current/tutorials/webserver-authentication
+        # FIXED INDENTATION BELOW
         auth_url = "https://auth.photonengine.com/auth/token"
         
         # CORRECT payload structure for Photon
         auth_payload = {
             "UserId": user_id,
             "Nickname": username,
-            "AppId": PHOTON_APP_ID,  # Key change: "AppId" not "TitleId"
+            "AppId": PHOTON_APP_ID,
             "AppVersion": PHOTON_APP_VERSION,
             "Region": PHOTON_REGION if PHOTON_REGION else "eu"
         }
@@ -74,13 +74,11 @@ async def login(request: LoginRequest):
                 timeout=10.0
             )
             
-            print(f"Photon Response Status: {response.status_code}")  # Debug log
-            print(f"Photon Response Body: {response.text}")  # Debug log
+            print(f"Photon Response Status: {response.status_code}")
+            print(f"Photon Response Body: {response.text}")
             
             if response.status_code == 200:
                 token_data = response.json()
-                
-                # Photon returns token in different possible fields
                 photon_token = token_data.get("Token") or token_data.get("token") or token_data.get("AccessToken")
                 
                 if photon_token:
