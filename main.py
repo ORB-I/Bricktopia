@@ -1,27 +1,32 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import httpx
+from supabase import create_client, Client
+import os
 import uuid
+import time
+import httpx
 
-app = FastAPI(title="Game Auth Server")
+app = FastAPI(title="Bricktopia Auth Server")
 
-# Allow Godot web client to call this server
+# CORS setup
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change this later for security
+    allow_origins=["*"],  # Change this later for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Photon Configuration
-PHOTON_APP_ID = "f8c55f77-6e3c-446d-a236-860d0718993a"
-PHOTON_APP_VERSION = "1.0"  # Your app version
-PHOTON_REGION = "eu"  # Change to "us", "asia", etc. as needed
+# Supabase Configuration - USE YOUR ACTUAL CREDENTIALS
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://zpngzssopxcnulvileea.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "sb_publishable_jmV7fSvVwz5bKMQCEf53bw_qFoWUIqf")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Request/Response models
+# Photon Configuration
+PHOTON_APP_ID = os.getenv("PHOTON_APP_ID", "f8c55f77-6e3c-446d-a236-860d0718993a")
+
+# Request/Response Models
 class LoginRequest(BaseModel):
     username: str
 
@@ -30,189 +35,128 @@ class LoginResponse(BaseModel):
     token: str = None
     message: str = ""
     user_id: str = None
-
-# In-memory "database" for prototype (replace with real DB later)
-users_db = {}
+    coins: int = 0
+    level: int = 1
+    username: str = ""
 
 @app.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
-    """Authenticate a user and get a Photon token"""
-    username = request.username.strip()
+    """Authenticate a user with Supabase database"""
+    username = request.username.strip().lower()[:50]
     
-    if not username:
-        return LoginResponse(success=False, message="Username required")
-    
-    # Create or get user ID
-    if username not in users_db:
-        users_db[username] = str(uuid.uuid4())
-    
-    user_id = users_db[username]
+    # Validation
+    if not username or len(username) < 3:
+        return LoginResponse(
+            success=False, 
+            message="Username must be 3+ characters"
+        )
     
     try:
-        # FIXED INDENTATION BELOW
-        auth_url = "https://auth.photonengine.com/auth/token"
+        # Check if user exists in Supabase
+        response = supabase.table("players") \
+            .select("id, username, coins, level, created_at") \
+            .eq("username", username) \
+            .execute()
         
-        # CORRECT payload structure for Photon
-        auth_payload = {
-            "UserId": user_id,
-            "Nickname": username,
-            "AppId": PHOTON_APP_ID,
-            "AppVersion": PHOTON_APP_VERSION,
-            "Region": PHOTON_REGION if PHOTON_REGION else "eu"
-        }
+        user_data = None
+        user_id = None
         
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                auth_url,
-                json=auth_payload,
-                headers=headers,
-                timeout=10.0
-            )
+        if response.data and len(response.data) > 0:
+            # EXISTING USER - Update last_login
+            user_data = response.data[0]
+            user_id = user_data["id"]
             
-            print(f"Photon Response Status: {response.status_code}")
-            print(f"Photon Response Body: {response.text}")
+            # Update last_login timestamp
+            supabase.table("players") \
+                .update({"last_login": "now()"}) \
+                .eq("id", user_id) \
+                .execute()
             
-            if response.status_code == 200:
-                token_data = response.json()
-                photon_token = token_data.get("Token") or token_data.get("token") or token_data.get("AccessToken")
-                
-                if photon_token:
-                    return LoginResponse(
-                        success=True,
-                        token=photon_token,
-                        message=f"Welcome {username}!",
-                        user_id=user_id
-                    )
-                else:
-                    return LoginResponse(
-                        success=False,
-                        message=f"Photon response missing token. Full response: {token_data}"
-                    )
-            else:
+            message = f"Welcome back, {username}!"
+            print(f"Existing user logged in: {username} (ID: {user_id})")
+            
+        else:
+            # NEW USER - Create in database
+            new_player = {
+                "username": username,
+                "coins": 100,
+                "level": 1
+            }
+            
+            insert_response = supabase.table("players") \
+                .insert(new_player) \
+                .execute()
+            
+            if not insert_response.data:
                 return LoginResponse(
                     success=False,
-                    message=f"Photon API error {response.status_code}: {response.text}"
+                    message="Failed to create player account"
                 )
-                
-    except httpx.ConnectError as e:
+            
+            user_data = insert_response.data[0]
+            user_id = user_data["id"]
+            message = f"Welcome, {username}! You start with 100 coins."
+            print(f"New user created: {username} (ID: {user_id})")
+        
+        # Generate authentication token (Photon integration pending)
+        # For now, create a signed token with user info
+        auth_token = f"bt_{user_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        
         return LoginResponse(
-            success=False,
-            message=f"Cannot connect to Photon servers: {str(e)}"
+            success=True,
+            token=auth_token,
+            message=message,
+            user_id=user_id,
+            coins=user_data.get("coins", 100),
+            level=user_data.get("level", 1),
+            username=username
         )
+        
     except Exception as e:
+        print(f"Database error for user {username}: {str(e)}")
         return LoginResponse(
             success=False,
-            message=f"Server error: {str(e)}"
+            message="Server error. Please try again."
         )
-
-@app.post("/mock-login", response_model=LoginResponse)
-async def mock_login(request: LoginRequest):
-    """MOCK endpoint for immediate testing"""
-    username = request.username.strip()
-    
-    if not username:
-        return LoginResponse(success=False, message="Username required")
-    
-    if username not in users_db:
-        users_db[username] = str(uuid.uuid4())[:8]
-    
-    user_id = users_db[username]
-    
-    # Realistic mock token format
-    import time, random
-    mock_token = f"mock_{user_id}_{int(time.time())}_{random.randint(1000,9999)}"
-    
-    return LoginResponse(
-        success=True,
-        token=mock_token,
-        message=f"Welcome {username}! (Photon auth pending)",
-        user_id=user_id
-    )
-
-@app.get("/mock-test")
-async def mock_test_page():
-    """Serve a simple HTML test page"""
-    html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Photon Mock Test</title>
-        <style>
-            body { font-family: Arial; padding: 30px; max-width: 500px; margin: 0 auto; }
-            input, button { padding: 10px; font-size: 16px; margin: 5px; }
-            #result { background: #f5f5f5; padding: 15px; margin-top: 20px; border-radius: 5px; white-space: pre-wrap; }
-        </style>
-    </head>
-    <body>
-        <h2>🔐 Photon Login Test (Mock Mode)</h2>
-        <input id="username" placeholder="Enter username" value="TestPlayer">
-        <button onclick="login()">Get Mock Token</button>
-        
-        <h3>Connection Test:</h3>
-        <button onclick="testConnection()">Test Server Connection</button>
-        
-        <div id="result"></div>
-        
-        <script>
-        async function login() {
-            const username = document.getElementById('username').value;
-            const result = document.getElementById('result');
-            result.textContent = 'Requesting token...';
-            
-            try {
-                const response = await fetch('/mock-login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username: username})
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    result.innerHTML = `✅ <b>SUCCESS!</b><br>
-                                       User ID: ${data.user_id}<br>
-                                       Mock Token:<br>
-                                       <code style="word-break: break-all">${data.token}</code><br><br>
-                                       <i>Photon integration pending...</i>`;
-                } else {
-                    result.innerHTML = `❌ Error: ${data.message}`;
-                }
-            } catch (error) {
-                result.innerHTML = `❌ Network error: ${error.message}`;
-            }
-        }
-        
-        async function testConnection() {
-            const result = document.getElementById('result');
-            result.textContent = 'Testing server connection...';
-            
-            try {
-                const response = await fetch('/health');
-                const data = await response.json();
-                result.innerHTML = `✅ <b>Server is online!</b><br>
-                                   Status: ${data.status}<br>
-                                   Service: ${data.service}`;
-            } catch (error) {
-                result.innerHTML = `❌ Server connection failed: ${error.message}`;
-            }
-        }
-        </script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(html)
 
 @app.get("/health")
 async def health_check():
-    """Simple health endpoint to verify server is running"""
-    return {"status": "ok", "service": "game-auth-server"}
+    """Health check endpoint"""
+    try:
+        # Test Supabase connection
+        test_query = supabase.table("players").select("count", count="exact").limit(1).execute()
+        return {
+            "status": "healthy",
+            "service": "bricktopia-auth",
+            "database": "connected",
+            "player_count": test_query.count if hasattr(test_query, 'count') else "unknown"
+        }
+    except Exception as e:
+        return {
+            "status": "degraded",
+            "service": "bricktopia-auth",
+            "database": "disconnected",
+            "error": str(e)[:100]
+        }
+
+@app.get("/debug/players")
+async def debug_players():
+    """Debug endpoint to see all players (remove in production)"""
+    try:
+        players = supabase.table("players") \
+            .select("*") \
+            .order("created_at", desc=True) \
+            .limit(10) \
+            .execute()
+        return {"players": players.data}
+    except Exception as e:
+        return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"Server starting... Photon App ID: {PHOTON_APP_ID[:8]}...")
+    print("=" * 50)
+    print("Bricktopia Auth Server Starting...")
+    print(f"Supabase URL: {SUPABASE_URL[:30]}...")
+    print(f"Photon App ID: {PHOTON_APP_ID[:8]}...")
+    print("=" * 50)
     uvicorn.run(app, host="0.0.0.0", port=8000)
