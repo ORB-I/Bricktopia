@@ -1,12 +1,10 @@
 {
   "build": {
-    "builder": "NIXPACKS",
-    "nixpacksConfig": {
-      "providers": ["python"]
-    }
+    "builder": "NIXPACKS"
   },
   "deploy": {
     "startCommand": "python main.py",
-    "restartPolicyType": "ON_FAILURE"
+    "restartPolicyType": "ON_FAILURE",
+    "healthcheckPath": "/health"
   }
 }
