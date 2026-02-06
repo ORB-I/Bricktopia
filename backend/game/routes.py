@@ -1,64 +1,57 @@
-# backend/game/routes.py
-from fastapi import APIRouter, HTTPException, Depends
+# game/routes.py - UPDATED VERSION
+from fastapi import APIRouter, HTTPException
 import uuid
 import time
 from typing import Dict
 from .models import CreateRoomRequest, JoinRoomRequest, GameActionRequest, RoomResponse
-from auth.middleware import get_current_user
 
 router = APIRouter()
 
-# In-memory game state
-rooms: Dict[str, Dict] = {}
-player_sessions: Dict[str, str] = {}  # player_id → room_id
+# Import shared state and cleanup
+from .cleanup import rooms, player_sessions, start_cleanup_task
+
+# Start cleanup on startup
+@router.on_event("startup")
+async def startup_event():
+    await start_cleanup_task()
 
 @router.post("/create-room", response_model=RoomResponse)
-async def create_room(
-    request: CreateRoomRequest,
-    current_user: dict = Depends(get_current_user)  # ← REQUIRES AUTH
-):
-    """Create a new game room (requires authentication)"""
-    # Use verified user_id from token, not from request body
-    player_id = current_user["user_id"]
-    
+async def create_room(request: CreateRoomRequest):
+    """Create a new game room"""
     room_id = str(uuid.uuid4())[:6].lower()
     rooms[room_id] = {
         "id": room_id,
-        "host": player_id,
-        "players": [player_id],
+        "host": request.player_id,
+        "players": [request.player_id],
         "created_at": time.time(),
-        "public": request.public if hasattr(request, 'public') else True,
         "state": {
             "scores": {},
             "started": False,
-            "turn": 0
+            "turn": 0,
+            "last_activity": time.time()
         }
     }
-    player_sessions[player_id] = room_id
+    player_sessions[request.player_id] = room_id
     
     return RoomResponse(
         success=True,
         room_id=room_id,
         photon_room=f"brick_{room_id}",
-        players=[player_id]
+        players=[request.player_id]
     )
 
 @router.post("/join-room", response_model=RoomResponse)
-async def join_room(
-    request: JoinRoomRequest,
-    current_user: dict = Depends(get_current_user)  # ← REQUIRES AUTH
-):
-    """Join existing room (requires authentication)"""
-    # Use verified user_id from token
-    player_id = current_user["user_id"]
-    
+async def join_room(request: JoinRoomRequest):
+    """Join existing room"""
     if request.room_id not in rooms:
         return RoomResponse(success=False, error="Room not found")
     
     room = rooms[request.room_id]
     
-    # Check if player already in room
-    if player_id in room["players"]:
+    # Update last activity
+    room["state"]["last_activity"] = time.time()
+    
+    if request.player_id in room["players"]:
         return RoomResponse(
             success=True,
             room_id=request.room_id,
@@ -66,13 +59,11 @@ async def join_room(
             players=room["players"]
         )
     
-    # Check room capacity
     if len(room["players"]) >= 8:
         return RoomResponse(success=False, error="Room full (max 8 players)")
     
-    # Add player to room
-    room["players"].append(player_id)
-    player_sessions[player_id] = request.room_id
+    room["players"].append(request.player_id)
+    player_sessions[request.player_id] = request.room_id
     
     return RoomResponse(
         success=True,
@@ -82,36 +73,21 @@ async def join_room(
     )
 
 @router.post("/game-action")
-async def game_action(
-    request: GameActionRequest,
-    current_user: dict = Depends(get_current_user)  # ← REQUIRES AUTH
-):
-    """Process game action (requires authentication)"""
-    # Use verified user_id from token
-    player_id = current_user["user_id"]
-    
-    room_id = player_sessions.get(player_id)
+async def game_action(request: GameActionRequest):
+    """Process game action (move, shoot, etc.)"""
+    room_id = player_sessions.get(request.player_id)
     if not room_id or room_id not in rooms:
         raise HTTPException(status_code=400, detail="Not in a valid room")
     
     room = rooms[room_id]
+    room["state"]["last_activity"] = time.time()
     
-    # Verify player is in the room
-    if player_id not in room["players"]:
-        raise HTTPException(status_code=403, detail="Not a member of this room")
-    
-    # Update game state based on action
     if request.action == "start_game":
-        # Only host can start game
-        if player_id != room["host"]:
-            raise HTTPException(status_code=403, detail="Only host can start game")
-        
         room["state"]["started"] = True
         room["state"]["start_time"] = time.time()
     
-    # Store last action
     room["state"]["last_action"] = {
-        "player": player_id,
+        "player": request.player_id,
         "action": request.action,
         "data": request.data,
         "timestamp": time.time()
@@ -124,108 +100,39 @@ async def game_action(
     }
 
 @router.get("/room/{room_id}")
-async def get_room(
-    room_id: str,
-    current_user: dict = Depends(get_current_user)  # ← REQUIRES AUTH
-):
-    """Get room info (requires authentication)"""
+async def get_room(room_id: str):
+    """Get room info (for reconnection)"""
     if room_id not in rooms:
         raise HTTPException(status_code=404, detail="Room not found")
     
-    room = rooms[room_id]
-    player_id = current_user["user_id"]
+    # Update last activity on polling
+    rooms[room_id]["state"]["last_activity"] = time.time()
     
-    # Can only view rooms you're in or public rooms
-    if player_id not in room["players"] and not room.get("public", True):
-        raise HTTPException(status_code=403, detail="Cannot view private room")
-    
-    return room
-
-@router.get("/rooms/list")
-async def list_rooms():
-    """Get all public rooms (no auth required for browsing)"""
-    public_rooms = []
-    for room_id, room_data in rooms.items():
-        if room_data.get("public", True) and not room_data["state"].get("started", False):
-            public_rooms.append({
-                "room_id": room_id,
-                "player_count": len(room_data["players"]),
-                "max_players": 8,
-                "created_at": room_data["created_at"]
-            })
-    return {"success": True, "rooms": public_rooms}
-
-@router.post("/rooms/quick-join")
-async def quick_join(
-    current_user: dict = Depends(get_current_user)  # ← REQUIRES AUTH
-):
-    """Join first available room or create new one (requires authentication)"""
-    player_id = current_user["user_id"]
-    
-    # Find available room
-    available = [r for r in rooms.values() 
-                 if len(r["players"]) < 8 
-                 and r.get("public", True)
-                 and not r["state"].get("started", False)]
-    
-    if available:
-        # Join least full room
-        room = min(available, key=lambda r: len(r["players"]))
-        
-        # Add player
-        if player_id not in room["players"]:
-            room["players"].append(player_id)
-            player_sessions[player_id] = room["id"]
-        
-        return RoomResponse(
-            success=True,
-            room_id=room["id"],
-            photon_room=f"brick_{room['id']}",
-            players=room["players"]
-        )
-    else:
-        # Create new room
-        return await create_room(
-            CreateRoomRequest(player_id=player_id),
-            current_user=current_user
-        )
+    return rooms[room_id]
 
 @router.post("/leave-room")
-async def leave_room(
-    current_user: dict = Depends(get_current_user)  # ← REQUIRES AUTH
-):
-    """Leave current room (requires authentication)"""
-    player_id = current_user["user_id"]
+async def leave_room(request: JoinRoomRequest):
+    """Leave current room"""
+    room_id = player_sessions.pop(request.player_id, None)
     
-    room_id = player_sessions.get(player_id)
-    if not room_id or room_id not in rooms:
-        return {"success": False, "error": "Not in a room"}
+    if room_id and room_id in rooms:
+        room = rooms[room_id]
+        if request.player_id in room["players"]:
+            room["players"].remove(request.player_id)
+            
+            # If room is empty, delete it
+            if len(room["players"]) == 0:
+                del rooms[room_id]
+                print(f"Deleted empty room: {room_id}")
+            # If host left, assign new host
+            elif request.player_id == room["host"] and room["players"]:
+                room["host"] = room["players"][0]
     
-    room = rooms[room_id]
-    
-    # Remove player from room
-    if player_id in room["players"]:
-        room["players"].remove(player_id)
-    
-    # Remove from sessions
-    if player_id in player_sessions:
-        del player_sessions[player_id]
-    
-    # Delete room if empty
-    if len(room["players"]) == 0:
-        del rooms[room_id]
-        return {"success": True, "message": "Left room (room deleted - was empty)"}
-    
-    # Transfer host if needed
-    if room["host"] == player_id and len(room["players"]) > 0:
-        room["host"] = room["players"][0]
-        return {"success": True, "message": "Left room (host transferred)"}
-    
-    return {"success": True, "message": "Left room"}
+    return {"success": True}
 
 @router.get("/health")
 async def health():
-    """Game service health check (no auth required)"""
+    """Game service health check"""
     return {
         "status": "healthy",
         "service": "game",
