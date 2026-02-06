@@ -1,23 +1,21 @@
-# backend/game/models.py
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 
 class CreateRoomRequest(BaseModel):
-    # player_id removed - comes from auth token
-    public: bool = True  # Whether room appears in server browser
+    player_id: str 
 
 class JoinRoomRequest(BaseModel):
     room_id: str
-    # player_id removed - comes from auth token
+    player_id: str
 
 class GameActionRequest(BaseModel):
-    # player_id removed - comes from auth token
+    player_id: str
     action: str
     data: Dict = {}
 
 class RoomResponse(BaseModel):
     success: bool
-    room_id: str = None
-    photon_room: str = None
+    room_id: Optional[str] = None
+    photon_room: Optional[str] = None
     players: List[str] = []
     error: str = ""
