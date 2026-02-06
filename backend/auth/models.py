@@ -1,19 +1,20 @@
 # auth/models.py
 from pydantic import BaseModel, Field
+from typing import Optional
 
 class SignupRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=20)
-    password: str = Field(..., min_length=3, max_length=72)  # Max 72 bytes for Supabase
+    username: str
+    password: str
 
 class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=20)
-    password: str = Field(..., min_length=3, max_length=72)
+    username: str
+    password: str
 
 class PlayerResponse(BaseModel):
     success: bool
-    token: str = None
+    token: Optional[str] = None
     message: str = ""
-    user_id: str = None
+    user_id: Optional[str] = None
     coins: int = 0
     level: int = 1
     username: str = ""

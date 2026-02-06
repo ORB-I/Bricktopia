@@ -1,7 +1,8 @@
-# auth/routes.py - COMPLETE FIX
+# auth/routes.py - SIMPLIFIED VERSION
 from fastapi import APIRouter, HTTPException
 from supabase import create_client
 import os
+import uuid
 import time
 from .models import SignupRequest, LoginRequest, PlayerResponse
 
@@ -15,19 +16,26 @@ supabase = create_client(
 
 @router.post("/signup", response_model=PlayerResponse)
 async def signup(request: SignupRequest):
-    """Create NEW player account with Supabase Auth"""
+    """Create NEW player account"""
     username = request.username.strip().lower()
     password = request.password
     
-    # Validate password length for Supabase
-    if len(password.encode('utf-8')) > 72:
+    # Validate inputs
+    if len(username) < 3:
         return PlayerResponse(
             success=False, 
-            message="Password too long (max 72 bytes). Please use a shorter password."
+            message="Username must be at least 3 characters"
+        )
+    
+    # Simple password length check (for display, not security)
+    if len(password) > 100:
+        return PlayerResponse(
+            success=False, 
+            message="Password too long (max 100 characters)"
         )
     
     try:
-        # Check if username exists in our players table
+        # Check if username exists
         existing = supabase.table("players").select("id").eq("username", username).execute()
         if existing.data:
             return PlayerResponse(
@@ -35,37 +43,30 @@ async def signup(request: SignupRequest):
                 message="Username already taken. Try logging in instead."
             )
         
-        # Create user in Supabase Auth
-        auth_response = supabase.auth.sign_up({
-            "email": f"{username}@bricktopia.game",  # Supabase requires email
-            "password": password,
-            "user_metadata": {"username": username}
-        })
+        # Create new player WITHOUT Supabase Auth
+        # Generate a UUID for the player
+        player_id = str(uuid.uuid4())
         
-        if not auth_response.user:
-            return PlayerResponse(success=False, message="Failed to create auth account")
-        
-        user_id = auth_response.user.id
-        
-        # Create player profile in our database
         new_player = {
-            "id": user_id,  # Use Supabase Auth UID
+            "id": player_id,
             "username": username,
+            "password_hash": password[:50],  # Simple storage (NOT SECURE - upgrade later!)
             "coins": 100,
             "level": 1,
             "created_at": "now()"
         }
         
         result = supabase.table("players").insert(new_player).execute()
+        player = result.data[0]
         
-        # Generate our own session token (or use Supabase's)
-        auth_token = f"bt_{user_id}_{int(time.time())}"
+        # Generate simple token (not JWT, but works)
+        auth_token = f"bt_{player_id}_{int(time.time())}"
         
         return PlayerResponse(
             success=True,
             token=auth_token,
             message=f"Welcome, {username}! Account created with 100 coins.",
-            user_id=user_id,
+            user_id=player_id,
             coins=100,
             level=1,
             username=username
@@ -73,62 +74,44 @@ async def signup(request: SignupRequest):
         
     except Exception as e:
         print(f"Signup error: {e}")
-        # Clean up if auth succeeded but player creation failed
-        if 'user_id' in locals():
-            try:
-                supabase.auth.admin.delete_user(user_id)
-            except:
-                pass
-        return PlayerResponse(success=False, message=str(e))
+        return PlayerResponse(success=False, message="Account creation failed")
 
 @router.post("/login", response_model=PlayerResponse)
 async def login(request: LoginRequest):
-    """Login EXISTING player with Supabase Auth"""
+    """Login EXISTING player"""
     username = request.username.strip().lower()
     password = request.password
     
     try:
-        # First, get the user ID from our players table
-        player_result = supabase.table("players").select("*").eq("username", username).execute()
-        if not player_result.data:
+        # Find player by username
+        result = supabase.table("players").select("*").eq("username", username).execute()
+        if not result.data:
             return PlayerResponse(
                 success=False, 
                 message="Account not found. Please sign up first."
             )
         
-        player = player_result.data[0]
-        user_id = player["id"]
+        player = result.data[0]
         
-        # Try to authenticate with Supabase Auth
-        # Note: Supabase Auth uses email, not username
-        email = f"{username}@bricktopia.game"
-        
-        try:
-            auth_response = supabase.auth.sign_in_with_password({
-                "email": email,
-                "password": password
-            })
-            
-            if not auth_response.user:
-                return PlayerResponse(success=False, message="Invalid password")
-                
-        except Exception as auth_error:
-            # If auth fails, it might be an old account (pre-Supabase Auth)
-            print(f"Auth error (maybe old account): {auth_error}")
-            # For now, allow login with just username check for backward compatibility
-            pass
+        # VERY BASIC password check (INSECURE - upgrade this!)
+        stored_password = player.get("password_hash", "")
+        if password[:50] != stored_password:  # Simple comparison
+            return PlayerResponse(
+                success=False, 
+                message="Invalid password"
+            )
         
         # Update last_login
-        supabase.table("players").update({"last_login": "now()"}).eq("id", user_id).execute()
+        supabase.table("players").update({"last_login": "now()"}).eq("id", player["id"]).execute()
         
         # Generate session token
-        auth_token = f"bt_{user_id}_{int(time.time())}"
+        auth_token = f"bt_{player['id']}_{int(time.time())}"
         
         return PlayerResponse(
             success=True,
             token=auth_token,
             message=f"Welcome back, {username}!",
-            user_id=user_id,
+            user_id=player["id"],
             coins=player.get("coins", 100),
             level=player.get("level", 1),
             username=username
@@ -140,7 +123,7 @@ async def login(request: LoginRequest):
 
 @router.get("/player/{player_id}")
 async def get_player(player_id: str):
-    """Get player profile (used by game service)"""
+    """Get player profile"""
     result = supabase.table("players").select("*").eq("id", player_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Player not found")
