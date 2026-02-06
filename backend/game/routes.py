@@ -1,28 +1,24 @@
-# game/routes.py - COMPLETE FIXED VERSION
-from fastapi import APIRouter, HTTPException
-import uuid
-import time
-from typing import Dict
-from .models import CreateRoomRequest, JoinRoomRequest, GameActionRequest, RoomResponse
-
-router = APIRouter()
-
-# In-memory game state
-rooms: Dict[str, Dict] = {}
-player_sessions: Dict[str, str] = {}  # player_id → room_id
-
 @router.post("/create-room", response_model=RoomResponse)
 async def create_room(request: CreateRoomRequest):
     """Create a new game room"""
     try:
         print(f"🎮 Creating room for player: {request.player_id}")
         
+        # Fetch username from auth database
+        player_result = supabase.table("players").select("username").eq("id", request.player_id).execute()
+        username = player_result.data[0]["username"] if player_result.data else f"Player_{request.player_id[:8]}"
+        
         room_id = str(uuid.uuid4())[:6].lower()
         
         rooms[room_id] = {
             "id": room_id,
             "host": request.player_id,
-            "players": [request.player_id],
+            "players": [
+                {
+                    "id": request.player_id,
+                    "username": username
+                }
+            ],
             "created_at": time.time(),
             "state": {
                 "scores": {},
@@ -34,11 +30,15 @@ async def create_room(request: CreateRoomRequest):
         
         print(f"✅ Room created: {room_id}")
         
+        # Build usernames dictionary
+        usernames = {request.player_id: username}
+        
         return RoomResponse(
             success=True,
             room_id=room_id,
             photon_room=f"brick_{room_id}",
-            players=[request.player_id]
+            players=[request.player_id],
+            usernames=usernames  # Send usernames mapping
         )
         
     except Exception as e:
@@ -62,29 +62,44 @@ async def join_room(request: JoinRoomRequest):
         room = rooms[request.room_id]
         
         # Check if player already in room
-        if request.player_id in room["players"]:
-            return RoomResponse(
-                success=True,
-                room_id=request.room_id,
-                photon_room=f"brick_{request.room_id}",
-                players=room["players"]
-            )
+        for player in room["players"]:
+            if player["id"] == request.player_id:
+                # Build usernames mapping for all players
+                usernames = {p["id"]: p["username"] for p in room["players"]}
+                return RoomResponse(
+                    success=True,
+                    room_id=request.room_id,
+                    photon_room=f"brick_{request.room_id}",
+                    players=[p["id"] for p in room["players"]],
+                    usernames=usernames
+                )
         
         # Check room capacity
         if len(room["players"]) >= 8:
             return RoomResponse(success=False, error="Room full (max 8 players)")
         
-        # Add player to room
-        room["players"].append(request.player_id)
+        # Fetch username from auth database
+        player_result = supabase.table("players").select("username").eq("id", request.player_id).execute()
+        username = player_result.data[0]["username"] if player_result.data else f"Player_{request.player_id[:8]}"
+        
+        # Add player to room with username
+        room["players"].append({
+            "id": request.player_id,
+            "username": username
+        })
         player_sessions[request.player_id] = request.room_id
         
-        print(f"✅ Player joined. Room now has: {room['players']}")
+        # Build usernames mapping for all players
+        usernames = {p["id"]: p["username"] for p in room["players"]}
+        
+        print(f"✅ Player joined. Room now has: {[p['username'] for p in room['players']]}")
         
         return RoomResponse(
             success=True,
             room_id=request.room_id,
             photon_room=f"brick_{request.room_id}",
-            players=room["players"]
+            players=[p["id"] for p in room["players"]],
+            usernames=usernames
         )
         
     except Exception as e:
@@ -96,52 +111,26 @@ async def join_room(request: JoinRoomRequest):
 
 @router.get("/room/{room_id}")
 async def get_room(room_id: str):
-    """Get room info"""
+    """Get room info with usernames"""
     try:
         if room_id not in rooms:
             raise HTTPException(status_code=404, detail="Room not found")
-        return rooms[room_id]
-    except Exception as e:
-        print(f"❌ Error getting room: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/game-action")
-async def game_action(request: GameActionRequest):
-    """Process game action"""
-    try:
-        room_id = player_sessions.get(request.player_id)
-        if not room_id or room_id not in rooms:
-            raise HTTPException(status_code=400, detail="Not in a valid room")
         
         room = rooms[room_id]
         
-        if request.action == "start_game":
-            room["state"]["started"] = True
-            room["state"]["start_time"] = time.time()
-        
-        room["state"]["last_action"] = {
-            "player": request.player_id,
-            "action": request.action,
-            "data": request.data,
-            "timestamp": time.time()
-        }
+        # Build usernames mapping
+        usernames = {p["id"]: p["username"] for p in room["players"]}
         
         return {
             "success": True,
-            "room_state": room["state"],
-            "room_id": room_id
+            "id": room["id"],
+            "host": room["host"],
+            "players": [p["id"] for p in room["players"]],
+            "usernames": usernames,  # Add usernames here!
+            "created_at": room["created_at"],
+            "state": room["state"]
         }
         
     except Exception as e:
-        print(f"❌ Game action error: {e}")
+        print(f"❌ Error getting room: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/health")
-async def health():
-    """Game service health check"""
-    return {
-        "status": "healthy",
-        "service": "game",
-        "active_rooms": len(rooms),
-        "active_players": len(player_sessions)
-    }

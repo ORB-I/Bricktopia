@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional
 
 class CreateRoomRequest(BaseModel):
-    player_id: str 
+    player_id: str
 
 class JoinRoomRequest(BaseModel):
     room_id: str
@@ -18,4 +18,5 @@ class RoomResponse(BaseModel):
     room_id: Optional[str] = None
     photon_room: Optional[str] = None
     players: List[str] = []
+    usernames: Dict[str, str] = {}  # ADD THIS LINE - player_id -> username
     error: str = ""
