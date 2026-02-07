@@ -1,4 +1,4 @@
-# game/models.py
+# game/models.py - UPDATED
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 
@@ -16,8 +16,8 @@ class GameActionRequest(BaseModel):
 
 class RoomResponse(BaseModel):
     success: bool
-    room_id: Optional[str] = None
-    photon_room: Optional[str] = None
+    room_id: str = ""
+    photon_room: str = ""
     players: List[str] = []
-    usernames: Dict[str, str] = {}  # This line is CRITICAL!
+    usernames: Dict[str, str] = {}
     error: str = ""
