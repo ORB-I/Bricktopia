@@ -88,9 +88,9 @@ async def login(request: LoginRequest):
         
         player = result.data[0]
         
-        # Simple password check
         stored_password = player.get("password_hash", "")
-        if password[:50] != stored_password:
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        if password_hash != stored_password:
             return PlayerResponse(success=False, message="Invalid password")
         
         # Update last_login
