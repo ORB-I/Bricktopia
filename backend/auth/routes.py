@@ -4,6 +4,7 @@ from supabase import create_client
 import os
 import uuid
 import time
+import hashlib
 from .models import SignupRequest, LoginRequest, PlayerResponse
 
 router = APIRouter()
@@ -27,13 +28,6 @@ async def signup(request: SignupRequest):
             message="Username must be at least 3 characters"
         )
     
-    # Simple password length check (for display, not security)
-    if len(password) > 100:
-        return PlayerResponse(
-            success=False, 
-            message="Password too long (max 100 characters)"
-        )
-    
     try:
         # Check if username exists
         existing = supabase.table("players").select("id").eq("username", username).execute()
@@ -43,14 +37,16 @@ async def signup(request: SignupRequest):
                 message="Username already taken. Try logging in instead."
             )
         
-        # Create new player WITHOUT Supabase Auth
-        # Generate a UUID for the player
+        # Create new player WITH SHA256 HASH (consistent with old data)
         player_id = str(uuid.uuid4())
+        
+        # Use SHA256 hash for consistency
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
         
         new_player = {
             "id": player_id,
             "username": username,
-            "password_hash": password[:50],  # Simple storage (NOT SECURE - upgrade later!)
+            "password_hash": password_hash,  # NOW USING SHA256!
             "coins": 100,
             "level": 1,
             "created_at": "now()"
@@ -59,7 +55,7 @@ async def signup(request: SignupRequest):
         result = supabase.table("players").insert(new_player).execute()
         player = result.data[0]
         
-        # Generate simple token (not JWT, but works)
+        # Generate session token
         auth_token = f"bt_{player_id}_{int(time.time())}"
         
         return PlayerResponse(
@@ -74,6 +70,8 @@ async def signup(request: SignupRequest):
         
     except Exception as e:
         print(f"Signup error: {e}")
+        import traceback
+        traceback.print_exc()
         return PlayerResponse(success=False, message="Account creation failed")
 
 @router.post("/login", response_model=PlayerResponse)
@@ -93,13 +91,19 @@ async def login(request: LoginRequest):
         
         player = result.data[0]
         
-        # VERY BASIC password check (INSECURE - upgrade this!)
-        stored_password = player.get("password_hash", "")
-        if password[:50] != stored_password:  # Simple comparison
-            return PlayerResponse(
-                success=False, 
-                message="Invalid password"
-            )
+        # FIXED: Use SHA256 hash comparison to match old data
+        stored_hash = player.get("password_hash", "")
+        
+        # Calculate SHA256 hash of provided password
+        provided_hash = hashlib.sha256(password.encode()).hexdigest()
+        
+        if provided_hash != stored_hash:
+            # Also try plain text for newly created accounts
+            if password[:50] != stored_hash:
+                return PlayerResponse(
+                    success=False, 
+                    message="Invalid password"
+                )
         
         # Update last_login
         supabase.table("players").update({"last_login": "now()"}).eq("id", player["id"]).execute()
@@ -119,6 +123,8 @@ async def login(request: LoginRequest):
         
     except Exception as e:
         print(f"Login error: {e}")
+        import traceback
+        traceback.print_exc()
         return PlayerResponse(success=False, message="Login failed")
 
 @router.get("/player/{player_id}")
