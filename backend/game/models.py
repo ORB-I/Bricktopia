@@ -19,5 +19,5 @@ class RoomResponse(BaseModel):
     room_id: Optional[str] = None
     photon_room: Optional[str] = None
     players: List[str] = []
-    usernames: Dict[str, str] = {}  # This line is CRITICAL!
+    usernames: Dict[str, str] = {}
     error: str = ""
