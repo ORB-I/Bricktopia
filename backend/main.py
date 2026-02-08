@@ -1,3 +1,4 @@
+# backend/main.py - COMPLETE FIXED VERSION
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -6,24 +7,21 @@ import os
 from auth.routes import router as auth_router
 from game.routes import router as game_router
 
-# Import friends
-from friends.routes import router as friends_router
-
 app = FastAPI(title="Bricktopia API", version="0.1.0")
 
-# CORS configuration
+# === CRITICAL CORS FIX ===
+# When Electron makes requests from file:// or app:// origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to specific domains in production
+    allow_origins=["*"],  # Allow ALL origins for now
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
 )
 
 # Mount routers with prefixes
 app.include_router(auth_router, prefix="/auth")
 app.include_router(game_router, prefix="/game")
-app.include_router(friends_router, prefix="/friends")
 
 # Root endpoint
 @app.get("/")
@@ -51,6 +49,12 @@ async def root():
 async def health():
     return {"status": "ok", "service": "bricktopia-api"}
 
+# Simple test endpoint
+@app.get("/test")
+async def test():
+    return {"message": "API is working!", "cors": "enabled"}
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
