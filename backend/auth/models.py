@@ -1,5 +1,5 @@
-# auth/models.py
-from pydantic import BaseModel, Field
+# backend/auth/models.py
+from pydantic import BaseModel
 from typing import Optional
 
 class SignupRequest(BaseModel):

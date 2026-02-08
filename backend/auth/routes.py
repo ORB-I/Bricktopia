@@ -1,4 +1,4 @@
-# auth/routes.py - SIMPLIFIED VERSION
+# backend/auth/routes.py - FIXED VERSION
 from fastapi import APIRouter, HTTPException
 from supabase import create_client
 import os
@@ -37,24 +37,24 @@ async def signup(request: SignupRequest):
                 message="Username already taken. Try logging in instead."
             )
         
-        # Create new player WITH SHA256 HASH (consistent with old data)
+        # Create new player WITH SHA256 HASH
         player_id = str(uuid.uuid4())
-        
-        # Use SHA256 hash for consistency
         password_hash = hashlib.sha256(password.encode()).hexdigest()
         
         new_player = {
             "id": player_id,
             "username": username,
-            "password_hash": password_hash,  # NOW USING SHA256!
+            "password_hash": password_hash,
             "coins": 100,
             "level": 1,
             "created_at": "now()"
         }
         
         result = supabase.table("players").insert(new_player).execute()
-        player = result.data[0]
         
+        if not result.data:
+            return PlayerResponse(success=False, message="Failed to create player")
+            
         # Generate session token
         auth_token = f"bt_{player_id}_{int(time.time())}"
         
@@ -81,25 +81,32 @@ async def login(request: LoginRequest):
     password = request.password
     
     try:
+        print(f"[Auth] Login attempt for: {username}")
+        
         # Find player by username
         result = supabase.table("players").select("*").eq("username", username).execute()
+        
         if not result.data:
+            print(f"[Auth] User not found: {username}")
             return PlayerResponse(
                 success=False, 
                 message="Account not found. Please sign up first."
             )
         
         player = result.data[0]
+        print(f"[Auth] Found player: {player['id']}")
         
-        # FIXED: Use SHA256 hash comparison to match old data
+        # Check password
         stored_hash = player.get("password_hash", "")
-        
-        # Calculate SHA256 hash of provided password
         provided_hash = hashlib.sha256(password.encode()).hexdigest()
         
+        print(f"[Auth] Stored hash: {stored_hash[:20]}...")
+        print(f"[Auth] Provided hash: {provided_hash[:20]}...")
+        
         if provided_hash != stored_hash:
-            # Also try plain text for newly created accounts
+            # Try plain text fallback
             if password[:50] != stored_hash:
+                print(f"[Auth] Password mismatch for {username}")
                 return PlayerResponse(
                     success=False, 
                     message="Invalid password"
@@ -110,6 +117,8 @@ async def login(request: LoginRequest):
         
         # Generate session token
         auth_token = f"bt_{player['id']}_{int(time.time())}"
+        
+        print(f"[Auth] Login successful for {username}")
         
         return PlayerResponse(
             success=True,
@@ -138,3 +147,17 @@ async def get_player(player_id: str):
 @router.get("/health")
 async def health():
     return {"status": "ok", "service": "auth"}
+
+@router.get("/test")
+async def test_auth():
+    return {"status": "auth router working"}
+
+@router.post("/test-login")
+async def test_login_endpoint(request: dict):
+    """Test endpoint that accepts raw dict"""
+    print(f"Test login received: {request}")
+    return {
+        "success": True,
+        "message": "Test endpoint works",
+        "received_data": request
+    }
