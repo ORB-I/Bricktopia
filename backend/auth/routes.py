@@ -57,7 +57,7 @@ async def signup(request: SignupRequest):
             return PlayerResponse(success=False, message="Failed to create player")
             
         # Generate session token
-        auth_token = f"bt_{player_id}_{int(time.time())}"
+        auth_token = create_access_token(player_id, username)
         
         return PlayerResponse(
             success=True,
@@ -96,7 +96,6 @@ async def login(request: LoginRequest):
         # Update last_login
         supabase.table("players").update({"last_login": "now()"}).eq("id", player["id"]).execute()
         
-        # Generate JWT token instead of simple token
         auth_token = create_access_token(player["id"], username)
         
         return PlayerResponse(
