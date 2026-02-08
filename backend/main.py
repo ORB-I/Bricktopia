@@ -11,7 +11,7 @@ app = FastAPI(title="Bricktopia API", version="0.1.0")
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Change to specific domains in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,9 +49,4 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # 🚨 CRITICAL FIX: Use Railway's PORT environment variable
-    port = int(os.getenv("PORT", 8000))  # Default to 8000 if PORT not set
-    print(f"🚀 Starting server on port {port} (from PORT env var)")
-    
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

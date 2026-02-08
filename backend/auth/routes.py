@@ -1,4 +1,4 @@
-# backend/auth/routes.py - FIXED VERSION
+# backend/auth/routes.py
 from fastapi import APIRouter, HTTPException
 from supabase import create_client
 import os
