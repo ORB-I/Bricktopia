@@ -1,26 +1,14 @@
-# backend/main.py - WITH ERROR HANDLING
-import traceback
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 import os
+
+# Import routers
+from auth.routes import router as auth_router
+from game.routes import router as game_router
 
 app = FastAPI(title="Bricktopia API", version="0.1.0")
 
-# === GLOBAL ERROR HANDLER ===
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    print(f"Global error: {exc}")
-    traceback.print_exc()
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": str(exc),
-            "type": type(exc).__name__
-        }
-    )
-
-# CORS
+# CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,36 +17,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Import routers INSIDE try-except
-try:
-    from auth.routes import router as auth_router
-    from game.routes import router as game_router
-    app.include_router(auth_router, prefix="/auth")
-    app.include_router(game_router, prefix="/game")
-    print("✅ Routers loaded successfully")
-except Exception as e:
-    print(f"❌ Failed to load routers: {e}")
-    traceback.print_exc()
-    # Create simple test endpoints
-    @app.post("/auth/login")
-    async def test_login():
-        return {"success": False, "message": "Auth router failed to load"}
-    
-    @app.post("/auth/signup")
-    async def test_signup():
-        return {"success": False, "message": "Auth router failed to load"}
+# Mount routers with prefixes
+app.include_router(auth_router, prefix="/auth")
+app.include_router(game_router, prefix="/game")
 
-# Test endpoint
+# Root endpoint
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "Bricktopia API"}
+    return {
+        "message": "Bricktopia API",
+        "endpoints": {
+            "auth": {
+                "signup": "POST /auth/signup",
+                "login": "POST /auth/login",
+                "player": "GET /auth/player/{id}"
+            },
+            "game": {
+                "create_room": "POST /game/create-room",
+                "join_room": "POST /game/join-room",
+                "game_action": "POST /game/game-action",
+                "room_info": "GET /game/room/{id}"
+            }
+        },
+        "status": "online"
+    }
 
-@app.get("/test")
-async def test():
-    return {"test": "ok", "cors": "working"}
+# Global health check
+@app.get("/health")
+async def health():
+    return {"status": "ok", "service": "bricktopia-api"}
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", 8000))
-    print(f"Starting server on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port, access_log=True)
+    
+    # 🚨 CRITICAL FIX: Use Railway's PORT environment variable
+    port = int(os.getenv("PORT", 8000))  # Default to 8000 if PORT not set
+    print(f"🚀 Starting server on port {port} (from PORT env var)")
+    
+    uvicorn.run(app, host="0.0.0.0", port=port)
