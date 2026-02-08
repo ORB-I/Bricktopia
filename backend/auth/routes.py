@@ -5,6 +5,7 @@ import os
 import uuid
 import time
 import hashlib
+from .utils import create_access_token
 from .models import SignupRequest, LoginRequest, PlayerResponse
 
 router = APIRouter()
@@ -81,59 +82,34 @@ async def login(request: LoginRequest):
     password = request.password
     
     try:
-        print(f"[Auth] Login attempt for: {username}")
-        
-        # Find player by username
         result = supabase.table("players").select("*").eq("username", username).execute()
-        
         if not result.data:
-            print(f"[Auth] User not found: {username}")
-            return PlayerResponse(
-                success=False, 
-                message="Account not found. Please sign up first."
-            )
+            return PlayerResponse(success=False, message="Account not found")
         
         player = result.data[0]
-        print(f"[Auth] Found player: {player['id']}")
         
-        # Check password
-        stored_hash = player.get("password_hash", "")
-        provided_hash = hashlib.sha256(password.encode()).hexdigest()
-        
-        print(f"[Auth] Stored hash: {stored_hash[:20]}...")
-        print(f"[Auth] Provided hash: {provided_hash[:20]}...")
-        
-        if provided_hash != stored_hash:
-            # Try plain text fallback
-            if password[:50] != stored_hash:
-                print(f"[Auth] Password mismatch for {username}")
-                return PlayerResponse(
-                    success=False, 
-                    message="Invalid password"
-                )
+        # Simple password check
+        stored_password = player.get("password_hash", "")
+        if password[:50] != stored_password:
+            return PlayerResponse(success=False, message="Invalid password")
         
         # Update last_login
         supabase.table("players").update({"last_login": "now()"}).eq("id", player["id"]).execute()
         
-        # Generate session token
-        auth_token = f"bt_{player['id']}_{int(time.time())}"
-        
-        print(f"[Auth] Login successful for {username}")
+        # Generate JWT token instead of simple token
+        auth_token = create_access_token(player["id"], username)
         
         return PlayerResponse(
             success=True,
-            token=auth_token,
+            token=auth_token,  # Now JWT token
             message=f"Welcome back, {username}!",
             user_id=player["id"],
             coins=player.get("coins", 100),
             level=player.get("level", 1),
             username=username
         )
-        
     except Exception as e:
         print(f"Login error: {e}")
-        import traceback
-        traceback.print_exc()
         return PlayerResponse(success=False, message="Login failed")
 
 @router.get("/player/{player_id}")
