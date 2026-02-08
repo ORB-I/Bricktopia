@@ -6,6 +6,9 @@ import os
 from auth.routes import router as auth_router
 from game.routes import router as game_router
 
+# Import friends
+from friends.routes import router as friends_router
+
 app = FastAPI(title="Bricktopia API", version="0.1.0")
 
 # CORS configuration
@@ -20,6 +23,7 @@ app.add_middleware(
 # Mount routers with prefixes
 app.include_router(auth_router, prefix="/auth")
 app.include_router(game_router, prefix="/game")
+app.include_router(friends_router, prefix="/friends")
 
 # Root endpoint
 @app.get("/")
