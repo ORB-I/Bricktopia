@@ -335,7 +335,7 @@ async def test_endpoint():
     """Test endpoint to verify friends API is working"""
     return {
         "success": True,
-        "message": "BrickFriends API is operational! 🧱👥",
+        "message": "OK",
         "endpoints": {
             "send_request": "POST /friends/send-request",
             "accept_request": "POST /friends/accept-request", 
